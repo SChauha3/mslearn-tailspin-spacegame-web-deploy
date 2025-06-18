@@ -1,36 +1,45 @@
 trigger:
 - '*'
 
-pool:
-  vmImage: 'ubuntu-latest'
-
 variables:
   buildConfiguration: 'Release'
-  wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
-  dotnetSdkVersion: '8.x'
-  artifactName: 'drop'
 
-steps:
+stages:
+- stage: 'Build'
+  displayName: 'Build the web application'
+  jobs: 
+  - job: 'Build'
+    displayName: 'Build job'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    variables:
+      buildConfiguration: 'Release'
+      wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
+      dotnetSdkVersion: '8.x'
+      artifactName: 'drop'
+
+    steps:
 # Use DotNet SDK as before
-- task: UseDotNet@2
-  displayName: 'Use .NET SDK $(dotnetSdkVersion)'
-  inputs:
-    version: '$(dotnetSdkVersion)'
+    - task: UseDotNet@2
+      displayName: 'Use .NET SDK $(dotnetSdkVersion)'
+      inputs:
+        version: '$(dotnetSdkVersion)'
 
 # Install Node.js (if not already handled by vmImage or if specific version needed)
 # Node.js 18.x or 20.x are fine for Dart Sass.
 # This task is not strictly necessary if ubuntu-latest provides a compatible Node.js,
 # but it ensures the version.
-- task: NodeTool@0
-  displayName: 'Use Node.js 18.x' # Or 20.x - compatible with 'sass' package
-  inputs:
-    versionSpec: '18.x'
-    checkLatest: true
+    - task: NodeTool@0
+      displayName: 'Use Node.js 18.x' # Or 20.x - compatible with 'sass' package
+      inputs:
+        versionSpec: '18.x'
+        checkLatest: true
 
-- task: Npm@1
-  displayName: 'Run npm install'
-  inputs:
-    command: 'install'
+    - task: Npm@1
+      displayName: 'Run npm install'
+      inputs:
+        command: 'install'
     # package.json is at root, so no workingDirectory needed here.
 
 # REMOVE THE OLD NODE-SASS SCRIPT STEP!
@@ -38,37 +47,37 @@ steps:
 #   displayName: 'Compile Sass assets'
 
 # Now, run your Gulp tasks. The 'default' task runs 'min', which now includes 'min:sass'.
-- task: Gulp@1
-  displayName: 'Run gulp tasks (including Sass compilation, JS/CSS minification)'
+    - task: Gulp@1
+      displayName: 'Run gulp tasks (including Sass compilation, JS/CSS minification)'
   #inputs:
     # No specific 'targets' needed if your 'default' task handles everything
     # gulpFile: 'gulpfile.js' # Default value if at root
 
-- script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
-  displayName: 'Write build info'
-  workingDirectory: $(wwwrootDir) # Ensure this directory exists before this step
+    - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
+      displayName: 'Write build info'
+      workingDirectory: $(wwwrootDir) # Ensure this directory exists before this step
 
-- task: DotNetCoreCLI@2
-  displayName: 'Restore project dependencies'
-  inputs:
-    command: 'restore'
-    projects: '**/*.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore project dependencies'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Build the project - $(buildConfiguration)'
-  inputs:
-    command: 'build'
-    arguments: '--no-restore --configuration $(buildConfiguration)'
-    projects: '**/*.csproj'
+    - task: DotNetCoreCLI@2
+      displayName: 'Build the project - $(buildConfiguration)'
+      inputs:
+        command: 'build'
+        arguments: '--no-restore --configuration $(buildConfiguration)'
+        projects: '**/*.csproj'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Publish the project - $(buildConfiguration)'
-  inputs:
-    command: 'publish'
-    projects: '**/*.csproj'
-    publishWebProjects: false
-    arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
-    zipAfterPublish: true
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish the project - $(buildConfiguration)'
+      inputs:
+        command: 'publish'
+        projects: '**/*.csproj'
+        publishWebProjects: false
+        arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
+        zipAfterPublish: true
 
-- publish: '$(Build.ArtifactStagingDirectory)'
-  artifact: drop
+    - publish: '$(Build.ArtifactStagingDirectory)'
+      artifact: drop
