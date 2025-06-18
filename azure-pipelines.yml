@@ -3,40 +3,71 @@ trigger:
 
 pool:
   vmImage: 'ubuntu-latest'
-  demands:
-  - npm
+  # The 'demands' keyword is deprecated. It's better to ensure the tool is available
+  # via the vmImage or install it explicitly if it's a very specific version.
+  # For npm, it's typically pre-installed on ubuntu-latest.
 
 variables:
   buildConfiguration: 'Release'
   wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
   dotnetSdkVersion: '8.x'
+  # Define a variable for the artifact name for consistency
+  artifactName: 'drop'
 
 steps:
 - task: UseDotNet@2
   displayName: 'Use .NET SDK $(dotnetSdkVersion)'
   inputs:
     version: '$(dotnetSdkVersion)'
+    # Optionally add package type for specific scenarios, e.g., sdk or runtime
+    # packageType: 'sdk'
 
 - task: Npm@1
   displayName: 'Run npm install'
   inputs:
-    verbose: false
+    # command: 'install' is the default but good to be explicit
+    command: 'install'
+    # By default, workingDirectory is the root of the repo.
+    # If your package.json is in a subdirectory, you'd specify it here:
+    # workingDirectory: 'Tailspin.SpaceGame.Web'
 
 - script: './node_modules/.bin/node-sass $(wwwrootDir) --output $(wwwrootDir)'
   displayName: 'Compile Sass assets'
+  # It's good practice to ensure the script exists or handle its absence.
+  # Also, consider adding a condition if this step is optional or depends on file changes.
 
-- task: gulp@1
+- task: Gulp@1
   displayName: 'Run gulp tasks'
+  inputs:
+    # Ensure your gulpfile.js is in the expected location or specify workingDirectory
+    # gulpFile: 'gulpfile.js' # Default value
+    # Arguments for gulp tasks, e.g., 'build'
+    # arguments: 'build'
+  # Add a condition if gulp tasks are not always necessary
+  # condition: succeededOrFailed() # or something more specific
 
 - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
   displayName: 'Write build info'
+  # Make sure the workingDirectory exists. If wwwrootDir might not exist before this,
+  # or if you want this file at the root of the artifact, adjust this.
   workingDirectory: $(wwwrootDir)
+  # Consider using a PowerShell or Bash task for better cross-platform compatibility
+  # and more robust scripting.
+  # For example, for PowerShell:
+  # - task: PowerShell@2
+  #   displayName: 'Write build info'
+  #   inputs:
+  #     targetType: 'inline'
+  #     script: |
+  #       "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" | Out-File -FilePath "$(wwwrootDir)/buildinfo.txt"
 
 - task: DotNetCoreCLI@2
   displayName: 'Restore project dependencies'
   inputs:
     command: 'restore'
     projects: '**/*.csproj'
+    # Consider adding a clean parameter if you want a fresh restore always
+    # clean: true
 
 - task: DotNetCoreCLI@2
   displayName: 'Build the project - $(buildConfiguration)'
@@ -44,15 +75,33 @@ steps:
     command: 'build'
     arguments: '--no-restore --configuration $(buildConfiguration)'
     projects: '**/*.csproj'
+    # Add a verbosity level for more detailed logs if needed
+    # verbosity: 'normal'
 
 - task: DotNetCoreCLI@2
   displayName: 'Publish the project - $(buildConfiguration)'
   inputs:
     command: 'publish'
     projects: '**/*.csproj'
-    publishWebProjects: false
-    arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
-    zipAfterPublish: true
+    # publishWebProjects: false - This is fine if you want to publish all projects
+    # that match the glob, and not just those identified as web projects.
+    # If you specifically only want to publish web projects, set this to true
+    # and adjust 'projects' if needed.
+    publishWebProjects: true # Typically you'd want to publish web projects explicitly
+    arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+    # The --output argument should point directly to the staging directory.
+    # The subfolder $(buildConfiguration) will be created by the publish command itself
+    # within the output directory if it's not already there based on the project structure.
+    # So, removed the /$(buildConfiguration) from the output path.
+    zipAfterPublish: false
+    # zipAfterPublish: true will zip each published project individually.
+    # It's often more desirable to publish unzipped files and then zip the whole artifact
+    # in a separate step if needed, or rely on the publish artifact task to handle zipping.
+    # For a consolidated artifact, it's usually better to have files unzipped here.
 
 - publish: '$(Build.ArtifactStagingDirectory)'
-  artifact: drop
+  artifact: '$(artifactName)'
+  displayName: 'Publish Build Artifact'
+  # Add a condition to ensure the artifact is published only on successful builds
+  condition: succeededOrFailed() # or just succeeded() if you only want successful builds
+  # Use the variable defined earlier for consistency
