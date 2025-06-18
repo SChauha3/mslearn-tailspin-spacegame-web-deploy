@@ -38,7 +38,7 @@ steps:
 
 - task: Gulp@1
   displayName: 'Run gulp tasks'
-  inputs:
+  #inputs:
     # Ensure your gulpfile.js is in the expected location or specify workingDirectory
     # gulpFile: 'gulpfile.js' # Default value
     # Arguments for gulp tasks, e.g., 'build'
