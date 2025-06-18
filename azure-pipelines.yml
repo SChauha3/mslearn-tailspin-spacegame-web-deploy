@@ -40,7 +40,7 @@ steps:
 # Now, run your Gulp tasks. The 'default' task runs 'min', which now includes 'min:sass'.
 - task: Gulp@1
   displayName: 'Run gulp tasks (including Sass compilation, JS/CSS minification)'
-  inputs:
+  #inputs:
     # No specific 'targets' needed if your 'default' task handles everything
     # gulpFile: 'gulpfile.js' # Default value if at root
 
