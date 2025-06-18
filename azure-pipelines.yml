@@ -71,6 +71,6 @@ steps:
     zipAfterPublish: false
 
 - publish: '$(Build.ArtifactStagingDirectory)'
-  artifact: '$(artifactName)'
+  artifact: 'drop'
   displayName: 'Publish Build Artifact'
   condition: succeededOrFailed()
