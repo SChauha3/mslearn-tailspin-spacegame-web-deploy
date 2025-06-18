@@ -2,13 +2,14 @@ trigger:
 - '*'
 
 pool:
-  vmImage: 'ubuntu-latest'
+  vmImage: 'ubuntu-20.04'
+  demands:
+  - npm
 
 variables:
   buildConfiguration: 'Release'
   wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
-  dotnetSdkVersion: '8.x'
-  artifactName: 'drop'
+  dotnetSdkVersion: '6.x'
 
 steps:
 - task: UseDotNet@2
@@ -19,27 +20,13 @@ steps:
 - task: Npm@1
   displayName: 'Run npm install'
   inputs:
-    command: 'install'
-    # If your package.json is in a subfolder, e.g., Tailspin.SpaceGame.Web:
-    # workingDirectory: 'Tailspin.SpaceGame.Web'
+    verbose: false
 
-- script: 'npm run compile-sass' # Assuming you add a script to package.json
+- script: './node_modules/.bin/node-sass $(wwwrootDir) --output $(wwwrootDir)'
   displayName: 'Compile Sass assets'
-  # Make sure this script exists in your package.json:
-  # "scripts": {
-  #   "compile-sass": "sass $(wwwrootDir):$(wwwrootDir)" // Basic example
-  # }
-  # Or if using Gulp, ensure your Gulp task handles it:
-  # task: Gulp@1
-  #   displayName: 'Run gulp sass task'
-  #   inputs:
-  #     targets: 'compileSass' # Or whatever your gulp task name is
 
-- task: Gulp@1
+- task: gulp@1
   displayName: 'Run gulp tasks'
-  #inputs:
-    # Ensure your gulpfile.js is in the expected location
-    # targets: 'default' # Or specific tasks if needed
 
 - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
   displayName: 'Write build info'
@@ -63,11 +50,9 @@ steps:
   inputs:
     command: 'publish'
     projects: '**/*.csproj'
-    publishWebProjects: true
-    arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
-    zipAfterPublish: false
+    publishWebProjects: false
+    arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
+    zipAfterPublish: true
 
 - publish: '$(Build.ArtifactStagingDirectory)'
-  artifact: '$(artifactName)'
-  displayName: 'Publish Build Artifact'
-  condition: succeededOrFailed()
+  artifact: drop
