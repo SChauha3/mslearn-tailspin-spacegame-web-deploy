@@ -3,6 +3,10 @@ trigger:
 
 variables:
   buildConfiguration: 'Release'
+  vmImageName: 'ubuntu-22.04' # Using a variable for consistency
+  wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot' # Moved to global variables for easier access
+  dotnetSdkVersion: '8.x'
+  jmeterVersion: '5.6.3' # Latest stable JMeter as of early 2024
 
 stages:
 - stage: 'Build'
@@ -11,11 +15,7 @@ stages:
   - job: 'Build'
     displayName: 'Build job'
     pool:
-      vmImage: 'ubuntu-22.04'
-
-    variables:
-      wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
-      dotnetSdkVersion: '8.x'
+      vmImage: '$(vmImageName)'
 
     steps:
     - task: UseDotNet@2
@@ -23,26 +23,40 @@ stages:
       inputs:
         version: '$(dotnetSdkVersion)'
 
-    - task: Npm@1
-      displayName: 'Run npm install'
-      inputs:
-        verbose: false
-
-    - script: './node_modules/.bin/node-sass $(wwwrootDir) --output $(wwwrootDir)'
-      displayName: 'Compile Sass assets'
-
-    - task: gulp@1
-      displayName: 'Run gulp tasks'
-
-    - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
-      displayName: 'Write build info'
-      workingDirectory: $(wwwrootDir)
-
+    # Restore .NET project dependencies first, as frontend assets might depend on project structure
     - task: DotNetCoreCLI@2
       displayName: 'Restore project dependencies'
       inputs:
         command: 'restore'
         projects: '**/*.csproj'
+
+    # Optional: If you need a *specific* Node.js version, uncomment this.
+    # Otherwise, the default Node.js on ubuntu-22.04 will be used, which is usually recent.
+    # - task: NodeTool@0
+    #   displayName: 'Use Node.js LTS'
+    #   inputs:
+    #     versionSpec: 'lts/*' # e.g., '18.x', '20.x' etc.
+
+    - task: Npm@1
+      displayName: 'Run npm install'
+      inputs:
+        verbose: false
+        # The workingDirectory input can be useful if your package.json isn't at the repo root.
+        # workingDirectory: 'Tailspin.SpaceGame.Web' # Example if package.json is here
+
+    # Removed the direct './node_modules/.bin/node-sass' script.
+    # Gulp will now handle Sass compilation using the 'sass' package.
+
+    - script: |
+        # Ensure gulp-cli is available globally, if not already installed on the agent or path
+        # npm install -g gulp-cli
+        gulp build # Run the 'build' task defined in gulpfile.js
+      displayName: 'Run gulp build tasks'
+      workingDirectory: 'Tailspin.SpaceGame.Web' # Ensure Gulp runs from the correct directory if needed
+
+    - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
+      displayName: 'Write build info'
+      workingDirectory: $(wwwrootDir) # Ensure this is relative to where buildinfo.txt should land
 
     - task: DotNetCoreCLI@2
       displayName: 'Build the project - $(buildConfiguration)'
@@ -56,12 +70,20 @@ stages:
       inputs:
         command: 'publish'
         projects: '**/*.csproj'
-        publishWebProjects: false
+        publishWebProjects: false # Set to true if you only want to publish web projects
         arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
         zipAfterPublish: true
 
     - publish: '$(Build.ArtifactStagingDirectory)'
-      artifact: drop
+      artifact: drop # This publishes your web app package
+
+    # Publish JMeter related files as a separate artifact for the load test stage
+    # Assuming LoadTest.jmx and JMeter2JUnit.xsl are at the repository root.
+    # Adjust paths if they are in subdirectories.
+    - publish: '$(System.DefaultWorkingDirectory)/LoadTest.jmx'
+      artifact: JMeterFiles
+    - publish: '$(System.DefaultWorkingDirectory)/JMeter2JUnit.xsl'
+      artifact: JMeterFiles
 
 - stage: 'Dev'
   displayName: 'Deploy to the dev environment'
@@ -69,10 +91,10 @@ stages:
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: 'ubuntu-22.04'
-    environment: dev 
+      vmImage: '$(vmImageName)'
+    environment: dev
     variables:
-    - group: Release
+    - group: Release # Assuming WebAppNameDev is in this group
     strategy:
       runOnce:
         deploy:
@@ -92,10 +114,10 @@ stages:
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: 'ubuntu-22.04'
+      vmImage: '$(vmImageName)'
     environment: test
     variables:
-    - group: 'Release'
+    - group: 'Release' # Assuming WebAppNameTest is in this group
     strategy:
       runOnce:
         deploy:
@@ -112,45 +134,57 @@ stages:
 - stage: 'Staging'
   displayName: 'Deploy to the staging environment'
   dependsOn: Test
+  variables:
+    - group: 'Release' # This will load all variables from the 'Release' variable group
+    # If STAGING_HOSTNAME is not in your 'Release' variable group, define it here:
+    # - name: STAGING_HOSTNAME
+    #   value: 'your-staging-app-service.azurewebsites.net' # *** IMPORTANT: Replace with your actual Staging App Service URL ***
   jobs:
-  - deployment: Deploy
-    pool:
-      vmImage: 'ubuntu-22.04'
-    environment: staging
-    variables:
-    - group: 'Release'
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - download: current
-            artifact: drop
-          - task: AzureWebApp@1
-            displayName: 'Azure App Service Deploy: website'
-            inputs:
-              azureSubscription: 'Resource Manager - Tailspin - Space Game'
-              appName: '$(WebAppNameStaging)'
-              package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
-  - job: RunLoadTests
-    dependsOn: Deploy
+  - deployment: Deploy # Deployment job for the Staging environment
+      pool:
+        vmImage: '$(vmImageName)'
+      environment: staging
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - download: current
+              artifact: drop
+            - task: AzureWebApp@1
+              displayName: 'Azure App Service Deploy: website'
+              inputs:
+                azureSubscription: 'Resource Manager - Tailspin - Space Game'
+                appName: '$(WebAppNameStaging)'
+                package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
+
+  - job: RunLoadTests # Load test job
+    dependsOn: Deploy # Ensure this runs after the 'Deploy' job in the Staging stage
     displayName: 'Run load tests'
     pool:
-      vmImage: 'ubuntu-22.04'
-    variables:
-    - group: Release
+      vmImage: '$(vmImageName)'
+    # Variables for this job are inherited from the stage, or you can add specific ones here if needed
     steps:
+    - download: current # Download artifacts from the current pipeline run
+      artifact: JMeterFiles # This will download LoadTest.jmx and JMeter2JUnit.xsl
+
     - script: |
-        wget -c archive.apache.org/dist/jmeter/binaries/apache-jmeter-$(jmeterVersion).tgz
+        wget -c https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-$(jmeterVersion).tgz
         tar -xzf apache-jmeter-$(jmeterVersion).tgz
       displayName: 'Install Apache JMeter'
-    - script: apache-jmeter-$(jmeterVersion)/bin/./jmeter -n -t LoadTest.jmx -o Results.xml -Jhostname=$(STAGING_HOSTNAME)
+
+    - script: |
+        # Use the downloaded JMX file. Ensure STAGING_HOSTNAME is defined (e.g., in Release variable group).
+        apache-jmeter-$(jmeterVersion)/bin/./jmeter -n -t $(Pipeline.Workspace)/JMeterFiles/LoadTest.jmx -o Results.xml -Jhostname=$(STAGING_HOSTNAME)
       displayName: 'Run Load tests'
+
     - script: |
         sudo apt-get update
-        sudo apt-get install xsltproc
-        xsltproc JMeter2JUnit.xsl Results.xml > JUnit.xml
+        sudo apt-get install -y xsltproc # -y to auto-confirm installation
+        # Use the downloaded XSLT file.
+        xsltproc $(Pipeline.Workspace)/JMeterFiles/JMeter2JUnit.xsl Results.xml > JUnit.xml
+        # OR if you prefer to use the one from JMeter's install, it's usually at 'apache-jmeter-$(jmeterVersion)/extras/JMeter2JUnit.xsl'
       displayName: 'Transform JMeter output to JUnit'
     - task: PublishTestResults@2
       inputs:
         testResultsFormat: JUnit
-        testResultsFiles: JUnit.xml 
+        testResultsFiles: JUnit.xml
