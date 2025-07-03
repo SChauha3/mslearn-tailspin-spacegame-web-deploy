@@ -3,60 +3,53 @@ trigger:
 
 variables:
   buildConfiguration: 'Release'
-  vmImageName: 'ubuntu-22.04' # Using a variable for consistency
-  wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot' # Moved to global variables for easier access
-  dotnetSdkVersion: '8.x'
-  jmeterVersion: '5.6.3' # Latest stable JMeter as of early 2024
 
 stages:
 - stage: 'Build'
   displayName: 'Build the web application'
-  jobs:
+  jobs: 
   - job: 'Build'
     displayName: 'Build job'
     pool:
-      vmImage: '$(vmImageName)'
+      vmImage: 'ubuntu-latest'
+
+    variables:
+      buildConfiguration: 'Release'
+      wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
+      dotnetSdkVersion: '8.x'
+      artifactName: 'drop'
 
     steps:
+# Use DotNet SDK as before
     - task: UseDotNet@2
       displayName: 'Use .NET SDK $(dotnetSdkVersion)'
       inputs:
         version: '$(dotnetSdkVersion)'
 
-    # Restore .NET project dependencies first, as frontend assets might depend on project structure
+    - task: NodeTool@0
+      displayName: 'Use Node.js 18.x' # Or 20.x - compatible with 'sass' package
+      inputs:
+        versionSpec: '18.x'
+        checkLatest: true
+
+    - task: Npm@1
+      displayName: 'Run npm install'
+      inputs:
+        command: 'install'
+    # package.json is at root, so no workingDirectory needed here.
+
+    - task: Gulp@1
+      displayName: 'Run gulp tasks (including Sass compilation, JS/CSS minification)'
+
+    - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
+      displayName: 'Write build info'
+      workingDirectory: $(wwwrootDir) # Ensure this directory exists before this step
+
     - task: DotNetCoreCLI@2
       displayName: 'Restore project dependencies'
       inputs:
         command: 'restore'
         projects: '**/*.csproj'
-
-    # Optional: If you need a *specific* Node.js version, uncomment this.
-    # Otherwise, the default Node.js on ubuntu-22.04 will be used, which is usually recent.
-    # - task: NodeTool@0
-    #   displayName: 'Use Node.js LTS'
-    #   inputs:
-    #     versionSpec: 'lts/*' # e.g., '18.x', '20.x' etc.
-
-    - task: Npm@1
-      displayName: 'Run npm install'
-      inputs:
-        verbose: false
-        # The workingDirectory input can be useful if your package.json isn't at the repo root.
-        # workingDirectory: 'Tailspin.SpaceGame.Web' # Example if package.json is here
-
-    # Removed the direct './node_modules/.bin/node-sass' script.
-    # Gulp will now handle Sass compilation using the 'sass' package.
-
-    - script: |
-        # Ensure gulp-cli is available globally, if not already installed on the agent or path
-        # npm install -g gulp-cli
-        gulp build # Run the 'build' task defined in gulpfile.js
-      displayName: 'Run gulp build tasks'
-      workingDirectory: 'Tailspin.SpaceGame.Web' # Ensure Gulp runs from the correct directory if needed
-
-    - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
-      displayName: 'Write build info'
-      workingDirectory: $(wwwrootDir) # Ensure this is relative to where buildinfo.txt should land
 
     - task: DotNetCoreCLI@2
       displayName: 'Build the project - $(buildConfiguration)'
@@ -70,31 +63,23 @@ stages:
       inputs:
         command: 'publish'
         projects: '**/*.csproj'
-        publishWebProjects: false # Set to true if you only want to publish web projects
+        publishWebProjects: false
         arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
         zipAfterPublish: true
 
     - publish: '$(Build.ArtifactStagingDirectory)'
-      artifact: drop # This publishes your web app package
+      artifact: drop
 
-    # Publish JMeter related files as a separate artifact for the load test stage
-    # Assuming LoadTest.jmx and JMeter2JUnit.xsl are at the repository root.
-    # Adjust paths if they are in subdirectories.
-    - publish: '$(System.DefaultWorkingDirectory)/LoadTest.jmx'
-      artifact: JMeterFiles
-    - publish: '$(System.DefaultWorkingDirectory)/JMeter2JUnit.xsl'
-      artifact: JMeterFiles
-
-- stage: 'Dev'
-  displayName: 'Deploy to the dev environment'
+- stage: 'Deploy'
+  displayName: 'Deploy the web application'
   dependsOn: Build
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: '$(vmImageName)'
+      vmImage: 'ubuntu-latest'
     environment: dev
     variables:
-    - group: Release # Assuming WebAppNameDev is in this group
+    - group: Release
     strategy:
       runOnce:
         deploy:
@@ -105,7 +90,7 @@ stages:
             displayName: 'Azure App Service Deploy: website'
             inputs:
               azureSubscription: 'Resource Manager - Tailspin - Space Game'
-              appName: '$(WebAppNameDev)'
+              appName: 'tailspin-space-game-web'
               package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
 
 - stage: 'Test'
@@ -114,7 +99,7 @@ stages:
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: '$(vmImageName)'
+      vmImage: 'ubuntu-latest'
     environment: test
     variables:
     - group: 'Release' # Assuming WebAppNameTest is in this group
@@ -134,35 +119,34 @@ stages:
 - stage: 'Staging'
   displayName: 'Deploy to the staging environment'
   dependsOn: Test
-  variables:
+  variables: # Define stage-level variables, assuming they apply to all jobs in this stage
     - group: 'Release' # This will load all variables from the 'Release' variable group
-    # If STAGING_HOSTNAME is not in your 'Release' variable group, define it here:
-    # - name: STAGING_HOSTNAME
-    #   value: 'your-staging-app-service.azurewebsites.net' # *** IMPORTANT: Replace with your actual Staging App Service URL ***
+    - name: jmeterVersion # Define JMeter version here, or globally if preferred
+      value: '5.6.3' # Verify the latest stable JMeter version
   jobs:
   - deployment: Deploy # Deployment job for the Staging environment
-      pool:
-        vmImage: '$(vmImageName)'
-      environment: staging
-      strategy:
-        runOnce:
-          deploy:
-            steps:
-            - download: current
-              artifact: drop
-            - task: AzureWebApp@1
-              displayName: 'Azure App Service Deploy: website'
-              inputs:
-                azureSubscription: 'Resource Manager - Tailspin - Space Game'
-                appName: '$(WebAppNameStaging)'
-                package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: staging
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+          - task: AzureWebApp@1
+            displayName: 'Azure App Service Deploy: website'
+            inputs:
+              azureSubscription: 'Resource Manager - Tailspin - Space Game'
+              appName: '$(WebAppNameStaging)'
+              package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
 
   - job: RunLoadTests # Load test job
     dependsOn: Deploy # Ensure this runs after the 'Deploy' job in the Staging stage
     displayName: 'Run load tests'
     pool:
       vmImage: '$(vmImageName)'
-    # Variables for this job are inherited from the stage, or you can add specific ones here if needed
+    # Variables are inherited from the stage, or you can add specific ones here if needed
     steps:
     - download: current # Download artifacts from the current pipeline run
       artifact: JMeterFiles # This will download LoadTest.jmx and JMeter2JUnit.xsl
@@ -173,16 +157,17 @@ stages:
       displayName: 'Install Apache JMeter'
 
     - script: |
-        # Use the downloaded JMX file. Ensure STAGING_HOSTNAME is defined (e.g., in Release variable group).
+        # Use the downloaded JMX file
         apache-jmeter-$(jmeterVersion)/bin/./jmeter -n -t $(Pipeline.Workspace)/JMeterFiles/LoadTest.jmx -o Results.xml -Jhostname=$(STAGING_HOSTNAME)
       displayName: 'Run Load tests'
 
     - script: |
         sudo apt-get update
         sudo apt-get install -y xsltproc # -y to auto-confirm installation
-        # Use the downloaded XSLT file.
+        # Use the downloaded XSLT file. If JMeter2JUnit.xsl is always in JMeter's extras, use that path.
         xsltproc $(Pipeline.Workspace)/JMeterFiles/JMeter2JUnit.xsl Results.xml > JUnit.xml
-        # OR if you prefer to use the one from JMeter's install, it's usually at 'apache-jmeter-$(jmeterVersion)/extras/JMeter2JUnit.xsl'
+        # OR alternative if it's always in JMeter's install:
+        # xsltproc apache-jmeter-$(jmeterVersion)/extras/JMeter2JUnit.xsl Results.xml > JUnit.xml
       displayName: 'Transform JMeter output to JUnit'
     - task: PublishTestResults@2
       inputs:
