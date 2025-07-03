@@ -93,7 +93,7 @@ stages:
               appName: '$(WebAppNameDev)'
               package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
 
-- stage: 'Test'
+- stage: 'Test' 
   displayName: 'Deploy to the test environment'
   dependsOn: Dev
   jobs:
