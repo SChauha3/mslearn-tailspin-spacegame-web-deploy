@@ -11,7 +11,7 @@ stages:
   - job: 'Build'
     displayName: 'Build job'
     pool:
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
 
     variables:
       wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
@@ -69,7 +69,7 @@ stages:
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     environment: dev
     variables:
     - group: Release
@@ -92,7 +92,7 @@ stages:
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     environment: test
     variables:
     - group: 'Release'
@@ -115,7 +115,7 @@ stages:
   jobs:
   - deployment: Deploy
     pool:
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     environment: staging
     variables:
     - group: 'Release'
@@ -135,7 +135,7 @@ stages:
     dependsOn: Deploy
     displayName: 'Run load tests'
     pool:
-      vmImage: 'ubuntu-latest'
+      vmImage: 'ubuntu-22.04'
     variables:
     - group: Release
     steps:
